@@ -20,7 +20,8 @@
 ---
 include:
   - board: nice_nano_v2
-    shield: cradio_dongle dongle_display
+    shield: cradio_dongle dongle_screen
+    artifact-name: dongle-screen
   - board: nice_nano_v2
     shield: cradio_left
     cmake-args: -DCONFIG_ZMK_SPLIT=y -DCONFIG_ZMK_SPLIT_ROLE_CENTRAL=n
