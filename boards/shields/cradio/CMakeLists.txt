@@ -1,0 +1,5 @@
+if(CONFIG_ZMK_DISPLAY AND CONFIG_ZMK_DISPLAY_STATUS_SCREEN_CUSTOM)
+    zephyr_library()
+    zephyr_library_sources(custom_status_screen.c)
+    zephyr_library_include_directories(${ZEPHYR_BASE}/lib/gui/lvgl/)
+endif()
