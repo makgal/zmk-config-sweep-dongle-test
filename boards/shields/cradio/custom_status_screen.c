@@ -3,6 +3,7 @@
 #include <zmk/display.h>
 #include <zmk/events/battery_state_changed.h>
 #include <zmk/event_manager.h>
+#include "custom_status_screen.h"
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
