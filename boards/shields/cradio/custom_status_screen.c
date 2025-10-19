@@ -1,29 +1,31 @@
-#include "custom_status_screen.h"
 /*
  * custom_status_screen.c
- *
- * Canvas + текст для отображения уровня батареи
+ * Показывает уровень батареи через canvas и текст, обновляется через события ZMK
  */
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <lvgl.h>
-#include <zmk/display.h>
-
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
-/* Количество отображаемых батарей (для split можно увеличить) */
+#include <zmk/battery.h>
+#include <zmk/display.h>
+#include <zmk/events/battery_state_changed.h>
+#include <zmk/events/usb_conn_state_changed.h>
+#include <zmk/event_manager.h>
+#include <zmk/usb.h>
+
+#include "custom_status_screen.h"
+
+#if IS_ENABLED(CONFIG_ZMK_DONGLE_DISPLAY_DONGLE_BATTERY)
+    #define SOURCE_OFFSET 1
+#else
+    #define SOURCE_OFFSET 0
+#endif
+
 #ifndef ZMK_SPLIT_BLE_PERIPHERAL_COUNT
 #  define ZMK_SPLIT_BLE_PERIPHERAL_COUNT 0
 #endif
 
-#if IS_ENABLED(CONFIG_ZMK_DONGLE_DISPLAY_DONGLE_BATTERY)
-#  define SOURCE_OFFSET 1
-#else
-#  define SOURCE_OFFSET 0
-#endif
-
-/* Списки виджетов и объекты батареи */
 static sys_slist_t widgets = SYS_SLIST_STATIC_INIT(&widgets);
 
 struct battery_state {
@@ -33,14 +35,13 @@ struct battery_state {
 };
 
 struct battery_object {
-    lv_obj_t *symbol;  // canvas для батареи
-    lv_obj_t *label;   // текстовый label для процента
+    lv_obj_t *symbol;   // canvas для батареи
+    lv_obj_t *label;    // текст с процентами
 } battery_objects[ZMK_SPLIT_BLE_PERIPHERAL_COUNT + SOURCE_OFFSET];
 
-/* Буфер для canvas (5x8 пикселей) */
 static lv_color_t battery_image_buffer[ZMK_SPLIT_BLE_PERIPHERAL_COUNT + SOURCE_OFFSET][5 * 8];
 
-/* Рисуем батарею на canvas */
+// Рисуем батарею на canvas
 static void draw_battery(lv_obj_t *canvas, uint8_t level, bool usb_present) {
     lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_COVER);
 
@@ -69,7 +70,7 @@ static void draw_battery(lv_obj_t *canvas, uint8_t level, bool usb_present) {
     }
 }
 
-/* Обновление виджета */
+// Обновление символа батареи и текста
 static void set_battery_symbol(lv_obj_t *widget, struct battery_state state) {
     if (state.source >= ZMK_SPLIT_BLE_PERIPHERAL_COUNT + SOURCE_OFFSET) {
         return;
@@ -79,36 +80,71 @@ static void set_battery_symbol(lv_obj_t *widget, struct battery_state state) {
     lv_obj_t *label = battery_objects[state.source].label;
 
     draw_battery(symbol, state.level, state.usb_present);
-
-    char buf[8];
-    snprintf(buf, sizeof(buf), "%3u%%", state.level);
-    lv_label_set_text(label, buf);
+    lv_label_set_text_fmt(label, "%3u%%", state.level);
 
     if (state.level > 0 || state.usb_present) {
         lv_obj_clear_flag(symbol, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(symbol);
         lv_obj_clear_flag(label, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(label);
     } else {
         lv_obj_add_flag(symbol, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
-/* Функция обновления батареи (можно вызвать вручную) */
-void battery_status_update_cb(uint8_t level, bool usb_present) {
+// Callback для обновления виджетов
+void battery_status_update_cb(struct battery_state state) {
     struct zmk_widget_dongle_battery_status *widget;
     SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
-        struct battery_state state = {
-            .source = 0,
-            .level = level,
-            .usb_present = usb_present,
-        };
         set_battery_symbol(widget->obj, state);
     }
 }
 
-/* Инициализация виджета */
+// Получение состояния батареи периферийного устройства
+static struct battery_state peripheral_battery_status_get_state(const zmk_event_t *eh) {
+    const struct zmk_peripheral_battery_state_changed *ev = as_zmk_peripheral_battery_state_changed(eh);
+    return (struct battery_state){
+        .source = ev->source + SOURCE_OFFSET,
+        .level = ev->state_of_charge,
+    };
+}
+
+// Получение состояния батареи центрального устройства
+static struct battery_state central_battery_status_get_state(const zmk_event_t *eh) {
+    const struct zmk_battery_state_changed *ev = as_zmk_battery_state_changed(eh);
+    return (struct battery_state){
+        .source = 0,
+        .level = (ev != NULL) ? ev->state_of_charge : zmk_battery_state_of_charge(),
+#if IS_ENABLED(CONFIG_USB_DEVICE_STACK)
+        .usb_present = zmk_usb_is_powered(),
+#endif
+    };
+}
+
+// Универсальное получение состояния батареи
+static struct battery_state battery_status_get_state(const zmk_event_t *eh) {
+    if (as_zmk_peripheral_battery_state_changed(eh) != NULL) {
+        return peripheral_battery_status_get_state(eh);
+    } else {
+        return central_battery_status_get_state(eh);
+    }
+}
+
+// Подключение виджета к ZMK событиям
+ZMK_DISPLAY_WIDGET_LISTENER(widget_dongle_battery_status, struct battery_state,
+                            battery_status_update_cb, battery_status_get_state)
+
+ZMK_SUBSCRIPTION(widget_dongle_battery_status, zmk_peripheral_battery_state_changed);
+
+#if IS_ENABLED(CONFIG_ZMK_DONGLE_DISPLAY_DONGLE_BATTERY)
+#if !IS_ENABLED(CONFIG_ZMK_SPLIT) || IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
+ZMK_SUBSCRIPTION(widget_dongle_battery_status, zmk_battery_state_changed);
+#if IS_ENABLED(CONFIG_USB_DEVICE_STACK)
+ZMK_SUBSCRIPTION(widget_dongle_battery_status, zmk_usb_conn_state_changed);
+#endif
+#endif
+#endif
+
+// Инициализация виджета
 int zmk_widget_dongle_battery_status_init(struct zmk_widget_dongle_battery_status *widget, lv_obj_t *parent) {
     widget->obj = lv_obj_create(parent);
     lv_obj_set_size(widget->obj, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -136,7 +172,6 @@ int zmk_widget_dongle_battery_status_init(struct zmk_widget_dongle_battery_statu
     return 0;
 }
 
-/* Получение объекта виджета */
 lv_obj_t *zmk_widget_dongle_battery_status_obj(struct zmk_widget_dongle_battery_status *widget) {
     return widget->obj;
 }
