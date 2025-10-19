@@ -1,70 +1,67 @@
+#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zmk/display.h>
 #include <zmk/events/battery_state_changed.h>
 #include <zmk/event_manager.h>
-#include <zmk/usb.h>
-#include <lvgl.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
-#define NUM_PERIPHERALS 2
+/* Статические переменные для хранения состояния половинок */
+static uint8_t left_level = 0;
+static uint8_t right_level = 0;
+static bool left_connected = false;
+static bool right_connected = false;
 
-struct peripheral_status {
-    uint8_t level;
-    bool connected;
-};
+static lv_obj_t *battery_label;
 
-static struct peripheral_status periph[NUM_PERIPHERALS] = {0};
-
-static void update_display(void) {
+/* Обновление текста на дисплее */
+static void update_text_display(void) {
     char buf[32];
 
-    // Формируем строку: L:100% R:100% или L:- R:100%
     snprintf(buf, sizeof(buf),
-        "L:%s R:%s",
-        periph[0].connected ? (char [4]){0} : "-",  // если подключена, заменим ниже
-        periph[1].connected ? (char [4]){0} : "-"
-    );
+             "L:%s R:%s",
+             left_connected ? "" : "-",
+             right_connected ? "" : "-");
 
-    if (periph[0].connected) {
-        snprintf(buf + 2, sizeof(buf) - 2, "%u%%", periph[0].level);
-    }
-    if (periph[1].connected) {
-        snprintf(buf + 9, sizeof(buf) - 9, "%u%%", periph[1].level);
+    if (left_connected) {
+        char left_buf[5];
+        snprintf(left_buf, sizeof(left_buf), "%u%%", left_level);
+        snprintf(buf + 2, sizeof(buf) - 2, "%s", left_buf);
     }
 
-    // Обновляем виджет на экране
-    lv_label_set_text(zmk_display_get_label(), buf);
+    if (right_connected) {
+        char right_buf[5];
+        snprintf(right_buf, sizeof(right_buf), "%u%%", right_level);
+        snprintf(buf + 9, sizeof(buf) - 9, "%s", right_buf);
+    }
+
+    lv_label_set_text(battery_label, buf);
 }
 
-// Событие обновления батареи
+/* Callback события батареи */
 static void battery_update_cb(const struct zmk_event_t *eh) {
     const struct zmk_battery_state_changed *ev = as_zmk_battery_state_changed(eh);
     if (!ev) return;
 
-    // Пример: ev->peripheral_index = 0 или 1
-    int idx = ev->peripheral_index;
-    if (idx >= 0 && idx < NUM_PERIPHERALS) {
-        periph[idx].level = ev->state_of_charge;
-        periph[idx].connected = true;
+    if (ev->source == 0) {      /* левая половинка */
+        left_level = ev->state_of_charge;
+        left_connected = true;
+    } else if (ev->source == 1) { /* правая половинка */
+        right_level = ev->state_of_charge;
+        right_connected = true;
     }
 
-    update_display();
+    update_text_display();
 }
 
-lv_obj_t *zmk_display_status_screen(void) {
-    lv_obj_t *screen = lv_obj_create(NULL);
+/* Инициализация виджета на экране */
+int zmk_widget_dongle_battery_status_init(lv_obj_t *parent) {
+    battery_label = lv_label_create(parent);
+    lv_label_set_text(battery_label, "L:- R:-");
+    lv_obj_align(battery_label, LV_ALIGN_TOP_RIGHT, 0, 0);
 
-    // создаём один общий label
-    lv_obj_t *label = lv_label_create(screen);
-    lv_obj_center(label);
-
-    zmk_display_set_label(label);
-
-    return screen;
+    return 0;
 }
 
-// Подписка на событие батареи
-ZMK_DISPLAY_WIDGET_LISTENER(widget_battery_status,
-    struct zmk_battery_state_changed, battery_update_cb, NULL)
-ZMK_SUBSCRIPTION(widget_battery_status, zmk_battery_state_changed);
+/* Подписка на события батареи */
+ZMK_SUBSCRIPTION(widget_dongle_battery_status, zmk_battery_state_changed);
