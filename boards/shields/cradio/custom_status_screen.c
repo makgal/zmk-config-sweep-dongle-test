@@ -2,38 +2,39 @@
 #include <zmk/display.h>
 #include <zmk/events/battery_state_changed.h>
 #include <zmk/event_manager.h>
-#include <zmk/usb.h>
 
-#define NUM_PERIPHERALS 2
-
-static lv_obj_t *battery_labels[NUM_PERIPHERALS];
+static lv_obj_t *battery_label;
 
 static void battery_update_cb(const zmk_event_t *eh) {
     const struct zmk_battery_state_changed *ev = as_zmk_battery_state_changed(eh);
     if (!ev) return;
 
-    for (int i = 0; i < NUM_PERIPHERALS; i++) {
-        bool connected = ev->peripheral_connected[i];  // true если половинка подключена
-        char buf[8];
+    char buf[32];
 
-        if (connected) {
-            snprintf(buf, sizeof(buf), "%u%%", ev->state_of_charge[i]);
-        } else {
-            snprintf(buf, sizeof(buf), "-");
-        }
+    // Проверяем состояние каждой половинки
+    const char *left  = ev->peripheral_connected[0] ? 
+                        (char [4]){0} : "-"; // временный буфер для процента
+    const char *right = ev->peripheral_connected[1] ? 
+                        (char [4]){0} : "-";
 
-        lv_label_set_text(battery_labels[i], buf);
-    }
+    if (ev->peripheral_connected[0])
+        snprintf((char *)left, 4, "%u%%", ev->state_of_charge[0]);
+
+    if (ev->peripheral_connected[1])
+        snprintf((char *)right, 4, "%u%%", ev->state_of_charge[1]);
+
+    // Формируем строку "L: xx% R: xx%" или с "-"
+    snprintf(buf, sizeof(buf), "L: %s R: %s", left, right);
+
+    lv_label_set_text(battery_label, buf);
 }
 
 lv_obj_t *zmk_display_status_screen(void) {
     lv_obj_t *screen = lv_obj_create(NULL);
 
-    for (int i = 0; i < NUM_PERIPHERALS; i++) {
-        battery_labels[i] = lv_label_create(screen);
-        lv_obj_align(battery_labels[i], LV_ALIGN_TOP_LEFT, 10 + i * 40, 10);
-        lv_label_set_text(battery_labels[i], "-");
-    }
+    battery_label = lv_label_create(screen);
+    lv_obj_align(battery_label, LV_ALIGN_TOP_LEFT, 10, 10);
+    lv_label_set_text(battery_label, "L: - R: -"); // начальный текст
 
     return screen;
 }
