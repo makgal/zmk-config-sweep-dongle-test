@@ -1,4 +1,9 @@
-#include <lvgl.h>
+#pragma once
+
+#include <zephyr/kernel.h>
+#include <zmk/display.h>
+#include "custom_status_screen.h"
+
 
 /**
  * @brief Создаёт экран и показывает текст "Тест"
