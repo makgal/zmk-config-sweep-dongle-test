@@ -6,7 +6,7 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-#include <zmk/display.h>
+//#include <zmk/display.h>
 #include <zmk/events/peripheral_battery_state_changed.h>
 #include <zmk/event_manager.h>
 #include <lvgl.h>
